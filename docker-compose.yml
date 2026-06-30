@@ -2,7 +2,7 @@ services:
   openresty:
     build: .
     ports:
-      - "8080:80"
+      - "80:80"
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
