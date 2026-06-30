@@ -72,7 +72,7 @@ for i in $(seq 1 25); do curl -s -o /dev/null -w "%{http_code}\n" -H 'X-Real-IP:
 
 预期结果：前 `AUTO_BAN_THRESHOLD` 次返回 `200`，下一次返回 `429`，之后命中黑名单返回 `403`。
 
-## 配置项
+## 配置项jinl
 
 修改 `docker-compose.yml` 里的环境变量：
 
@@ -107,7 +107,7 @@ conf/conf.d/blacklist-admin.conf
 业务站点可以参考：
 
 ```text
-conf/conf.d/aps.jinglewill.com.conf.example
+conf/conf.d/example.com.conf.example
 ```
 
 真实业务接入时，在对应 `location` 里加入：
