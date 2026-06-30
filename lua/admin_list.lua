@@ -1,0 +1,47 @@
+local admin = require "admin_common"
+local cjson = require "cjson.safe"
+
+if not admin.require_token() then
+    return
+end
+
+local red = admin.redis()
+if not red then
+    return
+end
+
+local cursor = "0"
+local bans = {}
+
+repeat
+    -- Redis SCAN 避免一次性 KEYS 扫全库，适合线上渐进式遍历。
+    local res, err = red:scan(cursor, "MATCH", "ban:*", "COUNT", 100)
+    if not res then
+        ngx.log(ngx.ERR, "redis scan failed: ", err)
+        admin.done(red)
+        ngx.header["Content-Type"] = "application/json"
+        ngx.status = ngx.HTTP_SERVICE_UNAVAILABLE
+        ngx.say('{"ok":false,"reason":"redis scan failed"}')
+        return
+    end
+
+    cursor = res[1]
+    local keys = res[2]
+    for _, key in ipairs(keys) do
+        local reason = red:get(key)
+        local ttl = red:ttl(key)
+        table.insert(bans, {
+            ip = string.sub(key, 5),
+            ttl = ttl,
+            reason = reason ~= ngx.null and reason or "",
+        })
+    end
+until cursor == "0"
+
+table.sort(bans, function(a, b)
+    return a.ip < b.ip
+end)
+
+ngx.header["Content-Type"] = "application/json"
+ngx.say(cjson.encode({ ok = true, bans = #bans > 0 and bans or cjson.empty_array }))
+admin.done(red)

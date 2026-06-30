@@ -1,0 +1,28 @@
+services:
+  openresty:
+    build: .
+    ports:
+      - "8080:80"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # REDIS_PASSWORD: "your-password"
+      ADMIN_TOKEN: "change-me"
+      CLIENT_IP_MODE: "x_real_ip" # 客户端 IP 获取模式：x_real_ip、proxy_protocol、remote_addr
+      AUTO_BAN_THRESHOLD: "10" # 触发自动封禁的请求次数阈值
+      AUTO_BAN_WINDOW: "60" # 统计窗口，单位秒
+      AUTO_BAN_TTL: "300"   # 自动封禁时长，单位秒
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    # command: ["redis-server", "--appendonly", "yes", "--requirepass", "your-password"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
