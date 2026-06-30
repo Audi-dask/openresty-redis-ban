@@ -15,8 +15,18 @@ if not red then
     return
 end
 
-local reason = red:get("ban:" .. ip)
-local ttl = red:ttl("ban:" .. ip)
+local reason, err = red:get("ban:" .. ip)
+if err then
+    admin.redis_error(red, "get", err)
+    return
+end
+
+local ttl
+ttl, err = red:ttl("ban:" .. ip)
+if err then
+    admin.redis_error(red, "ttl", err)
+    return
+end
 local banned = reason and reason ~= ngx.null
 
 ngx.header["Content-Type"] = "application/json"

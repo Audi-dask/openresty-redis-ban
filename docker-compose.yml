@@ -9,6 +9,7 @@ services:
       # REDIS_PASSWORD: "your-password"
       ADMIN_TOKEN: "change-me"
       CLIENT_IP_MODE: "x_real_ip" # 客户端 IP 获取模式：x_real_ip、proxy_protocol、remote_addr
+      FAIL_MODE: "open" # Redis 故障策略：open 放行、closed 返回 503
       AUTO_BAN_THRESHOLD: "10" # 触发自动封禁的请求次数阈值
       AUTO_BAN_WINDOW: "60" # 统计窗口，单位秒
       AUTO_BAN_TTL: "300"   # 自动封禁时长，单位秒

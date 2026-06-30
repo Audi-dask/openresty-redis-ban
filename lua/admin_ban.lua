@@ -21,7 +21,11 @@ if not red then
     return
 end
 
-red:setex("ban:" .. ip, ttl, reason)
+local ok, err = red:setex("ban:" .. ip, ttl, reason)
+if not ok then
+    admin.redis_error(red, "setex", err)
+    return
+end
 
 ngx.header["Content-Type"] = "application/json"
 ngx.say(cjson.encode({ ok = true, ip = ip, ttl = ttl, reason = reason }))

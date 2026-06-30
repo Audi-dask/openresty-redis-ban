@@ -8,6 +8,33 @@ local function number_env(name, default)
     return value
 end
 
+local function fail_mode()
+    local mode = os.getenv("FAIL_MODE") or "open"
+    if mode == "open" or mode == "closed" then
+        return mode
+    end
+
+    ngx.log(ngx.WARN, "unknown FAIL_MODE: ", mode, ", fallback to open")
+    return "open"
+end
+
+local function redis_unavailable(reason, red)
+    if red then
+        redis_client.close(red)
+    end
+
+    if fail_mode() == "open" then
+        ngx.log(ngx.ERR, "redis unavailable, fail-open allow request: ", reason)
+        return ngx.OK
+    end
+
+    ngx.log(ngx.ERR, "redis unavailable, fail-closed reject request: ", reason)
+    ngx.header["Content-Type"] = "application/json"
+    ngx.status = ngx.HTTP_SERVICE_UNAVAILABLE
+    ngx.say('{"ok":false,"reason":"redis unavailable"}')
+    return ngx.exit(ngx.HTTP_SERVICE_UNAVAILABLE)
+end
+
 local function client_ip()
     local mode = os.getenv("CLIENT_IP_MODE") or "x_real_ip"
 
@@ -26,23 +53,72 @@ local function client_ip()
     return ngx.var.remote_addr or "unknown"
 end
 
+local rate_script = [[
+local ban_key = KEYS[1]
+local rate_key = KEYS[2]
+local threshold = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local ban_ttl = tonumber(ARGV[3])
+
+local banned = redis.call("GET", ban_key)
+if banned then
+    return {"banned", banned, -1}
+end
+
+local count = redis.call("INCR", rate_key)
+if count == 1 then
+    redis.call("EXPIRE", rate_key, window)
+end
+
+if count > threshold then
+    redis.call("SETEX", ban_key, ban_ttl, "auto-rate-limit")
+    return {"limited", "auto-rate-limit", count}
+end
+
+return {"allowed", "", count}
+]]
+
+local function run_rate_script(red, ban_key, rate_key, threshold, window, ttl)
+    return red:eval(rate_script, 2, ban_key, rate_key, threshold, window, ttl)
+end
+
 local ip = client_ip()
 local red, err = redis_client.connect()
 if not red then
-    ngx.log(ngx.ERR, "redis connect failed: ", err)
-    return ngx.exit(ngx.HTTP_SERVICE_UNAVAILABLE)
+    return redis_unavailable("connect failed: " .. (err or "unknown"))
 end
 
+local function reconnect_once(old_red, reason)
+    redis_client.close(old_red)
+    ngx.log(ngx.WARN, "redis command failed, reconnecting once: ", reason)
+    return redis_client.connect()
+end
+
+local threshold = number_env("AUTO_BAN_THRESHOLD", 10)
+local window = number_env("AUTO_BAN_WINDOW", 60)
+local ttl = number_env("AUTO_BAN_TTL", 300)
 local ban_key = "ban:" .. ip
-local banned, get_err = red:get(ban_key)
-if get_err then
-    ngx.log(ngx.ERR, "redis get failed: ", get_err)
-    redis_client.keepalive(red)
-    return ngx.exit(ngx.HTTP_SERVICE_UNAVAILABLE)
+local rate_key = "rate:" .. ip
+
+-- 原子完成：查封禁、计数、首次设置窗口 TTL、超阈值写入封禁。
+local result, eval_err = run_rate_script(red, ban_key, rate_key, threshold, window, ttl)
+if eval_err == "closed" then
+    red, err = reconnect_once(red, eval_err)
+    if not red then
+        return redis_unavailable("reconnect failed after eval: " .. (err or "unknown"))
+    end
+    result, eval_err = run_rate_script(red, ban_key, rate_key, threshold, window, ttl)
 end
 
-if banned and banned ~= ngx.null then
-    -- 命中 Redis 里的 ban:<ip>，直接拒绝访问。
+if not result then
+    return redis_unavailable("eval failed: " .. (eval_err or "unknown"), red)
+end
+
+local status = result[1]
+local reason = result[2]
+local count = tonumber(result[3]) or 0
+
+if status == "banned" then
     ngx.header["Content-Type"] = "application/json"
     ngx.status = ngx.HTTP_FORBIDDEN
     ngx.say('{"ok":false,"reason":"ip banned"}')
@@ -50,34 +126,19 @@ if banned and banned ~= ngx.null then
     return ngx.exit(ngx.HTTP_FORBIDDEN)
 end
 
-local threshold = number_env("AUTO_BAN_THRESHOLD", 10)
-local window = number_env("AUTO_BAN_WINDOW", 60)
-local ttl = number_env("AUTO_BAN_TTL", 300)
-local rate_key = "rate:" .. ip
-
--- rate:<ip> 是固定窗口计数器，第一次出现时设置窗口过期时间。
-local count, incr_err = red:incr(rate_key)
-if not count then
-    ngx.log(ngx.ERR, "redis incr failed: ", incr_err)
-    redis_client.keepalive(red)
-    return ngx.exit(ngx.HTTP_SERVICE_UNAVAILABLE)
-end
-
-if count == 1 then
-    red:expire(rate_key, window)
-end
-
 ngx.header["X-RateLimit-Limit"] = threshold
 ngx.header["X-RateLimit-Remaining"] = math.max(threshold - count, 0)
 
-if count > threshold then
-    -- 超过阈值后写入 ban:<ip>，让后续请求直接走 403 封禁逻辑。
-    red:setex(ban_key, ttl, "auto-rate-limit")
+if status == "limited" then
     ngx.header["Content-Type"] = "application/json"
     ngx.status = ngx.HTTP_TOO_MANY_REQUESTS
     ngx.say('{"ok":false,"reason":"auto banned by rate limit"}')
     redis_client.keepalive(red)
     return ngx.exit(ngx.HTTP_TOO_MANY_REQUESTS)
+end
+
+if status ~= "allowed" then
+    return redis_unavailable("unexpected eval status: " .. tostring(status), red)
 end
 
 redis_client.keepalive(red)

@@ -28,8 +28,18 @@ repeat
     cursor = res[1]
     local keys = res[2]
     for _, key in ipairs(keys) do
-        local reason = red:get(key)
-        local ttl = red:ttl(key)
+        local reason, get_err = red:get(key)
+        if get_err then
+            admin.redis_error(red, "get", get_err)
+            return
+        end
+
+        local ttl, ttl_err = red:ttl(key)
+        if ttl_err then
+            admin.redis_error(red, "ttl", ttl_err)
+            return
+        end
+
         table.insert(bans, {
             ip = string.sub(key, 5),
             ttl = ttl,

@@ -3,7 +3,15 @@ local redis_client = require "redis_client"
 local _M = {}
 
 function _M.require_token()
-    local expected = os.getenv("ADMIN_TOKEN") or "change-me"
+    local expected = os.getenv("ADMIN_TOKEN")
+    if not expected or expected == "" then
+        ngx.log(ngx.ERR, "ADMIN_TOKEN is not configured")
+        ngx.header["Content-Type"] = "application/json"
+        ngx.status = ngx.HTTP_SERVICE_UNAVAILABLE
+        ngx.say('{"ok":false,"reason":"admin token not configured"}')
+        return false
+    end
+
     -- 管理接口支持 Header 或 query token，页面请求使用 Header。
     local actual = ngx.req.get_headers()["X-Admin-Token"] or ngx.var.arg_token
 
@@ -95,6 +103,14 @@ function _M.redis()
         return nil
     end
     return red
+end
+
+function _M.redis_error(red, operation, err)
+    ngx.log(ngx.ERR, "redis ", operation, " failed: ", err)
+    redis_client.close(red)
+    ngx.header["Content-Type"] = "application/json"
+    ngx.status = ngx.HTTP_SERVICE_UNAVAILABLE
+    ngx.say('{"ok":false,"reason":"redis unavailable"}')
 end
 
 function _M.done(red)

@@ -15,8 +15,17 @@ if not red then
     return
 end
 
-red:del("ban:" .. ip)
-red:del("rate:" .. ip)
+local ok, err = red:del("ban:" .. ip)
+if not ok then
+    admin.redis_error(red, "del ban", err)
+    return
+end
+
+ok, err = red:del("rate:" .. ip)
+if not ok then
+    admin.redis_error(red, "del rate", err)
+    return
+end
 
 ngx.header["Content-Type"] = "application/json"
 ngx.say(cjson.encode({ ok = true, ip = ip, unbanned = true }))
