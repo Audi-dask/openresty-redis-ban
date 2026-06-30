@@ -11,7 +11,7 @@ docker compose up --build
 另开一个终端测试访问：
 
 ```bash
-curl -i http://localhost:8080/
+curl -i http://localhost:80/
 ```
 
 ## 页面管理
@@ -19,7 +19,7 @@ curl -i http://localhost:8080/
 打开 Bootstrap 管理页面：
 
 ```text
-http://localhost:8080/admin/
+http://localhost:80/admin/
 ```
 
 默认管理 Token：
@@ -35,31 +35,31 @@ change-me
 拉黑一个 IP 60 秒：
 
 ```bash
-curl -i -H 'X-Admin-Token: change-me' 'http://localhost:8080/admin/ban?ip=1.2.3.4&ttl=60&reason=test'
+curl -i -H 'X-Admin-Token: change-me' 'http://localhost:80/admin/ban?ip=1.2.3.4&ttl=60&reason=test'
 ```
 
 模拟这个 IP 访问：
 
 ```bash
-curl -i -H 'X-Real-IP: 1.2.3.4' http://localhost:8080/
+curl -i -H 'X-Real-IP: 1.2.3.4' http://localhost:80/
 ```
 
 查询封禁状态：
 
 ```bash
-curl -i -H 'X-Admin-Token: change-me' 'http://localhost:8080/admin/check?ip=1.2.3.4'
+curl -i -H 'X-Admin-Token: change-me' 'http://localhost:80/admin/check?ip=1.2.3.4'
 ```
 
 查看当前黑名单：
 
 ```bash
-curl -i -H 'X-Admin-Token: change-me' 'http://localhost:8080/admin/list'
+curl -i -H 'X-Admin-Token: change-me' 'http://localhost:80/admin/list'
 ```
 
 解除封禁：
 
 ```bash
-curl -i -H 'X-Admin-Token: change-me' 'http://localhost:8080/admin/unban?ip=1.2.3.4'
+curl -i -H 'X-Admin-Token: change-me' 'http://localhost:80/admin/unban?ip=1.2.3.4'
 ```
 
 ## 自动封禁
@@ -67,7 +67,7 @@ curl -i -H 'X-Admin-Token: change-me' 'http://localhost:8080/admin/unban?ip=1.2.
 默认配置下，同一个 IP 在 60 秒内请求超过 20 次会被自动封禁 300 秒。
 
 ```bash
-for i in $(seq 1 25); do curl -s -o /dev/null -w "%{http_code}\n" -H 'X-Real-IP: 5.6.7.8' http://localhost:8080/; done
+for i in $(seq 1 25); do curl -s -o /dev/null -w "%{http_code}\n" -H 'X-Real-IP: 5.6.7.8' http://localhost:80/; done
 ```
 
 预期结果：前 `AUTO_BAN_THRESHOLD` 次返回 `200`，下一次返回 `429`，之后命中黑名单返回 `403`。
