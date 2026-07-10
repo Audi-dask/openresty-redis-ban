@@ -46,6 +46,9 @@
         <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#rulesPane" type="button">URL 防护规则</button>
       </li>
       <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#eventsPane" type="button">安全事件</button>
+      </li>
+      <li class="nav-item" role="presentation">
         <button class="nav-link" data-bs-toggle="pill" data-bs-target="#limitsPane" type="button">接口限制记录</button>
       </li>
       <li class="nav-item" role="presentation">
@@ -99,6 +102,38 @@
                 </tr>
               </thead>
               <tbody id="ruleRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="eventsPane" class="tab-pane fade">
+        <section class="card border-0 shadow-sm">
+          <div class="card-header bg-white py-3">
+            <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
+              <div>
+                <div class="fw-semibold">安全事件</div>
+                <div class="small text-secondary mt-1">记录 WAF 拦截事件，不包含请求体、查询参数、Cookie 或 Authorization。</div>
+              </div>
+              <div class="d-flex gap-2 align-self-lg-start">
+                <button id="refreshEventsBtn" class="btn btn-sm btn-outline-primary">刷新</button>
+                <button id="clearEventsBtn" class="btn btn-sm btn-outline-danger">清空记录</button>
+              </div>
+            </div>
+          </div>
+          <div class="card-body border-top">
+            <div class="row g-2">
+              <div class="col-md-3"><input id="eventRequestId" class="form-control" placeholder="事件 ID"></div>
+              <div class="col-md-3"><input id="eventIp" class="form-control" placeholder="客户端 IP"></div>
+              <div class="col-md-3"><input id="eventRuleId" class="form-control" placeholder="规则 ID"></div>
+              <div class="col-md-2"><select id="eventAction" class="form-select"><option value="">全部处置</option><option value="endpoint">限制接口</option><option value="global">全站封禁</option></select></div>
+              <div class="col-md-1"><button id="searchEventsBtn" class="btn btn-primary w-100">查询</button></div>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead><tr><th>时间 / 事件 ID</th><th>客户端</th><th>请求</th><th>命中规则</th><th>处置结果</th></tr></thead>
+              <tbody id="eventRows"><tr><td colspan="5" class="empty-state">切换到此页时加载...</td></tr></tbody>
             </table>
           </div>
         </section>
@@ -184,6 +219,7 @@
   <script>
     const tokenEl = document.querySelector('#token');
     const banRowsEl = document.querySelector('#banRows');
+    const eventRowsEl = document.querySelector('#eventRows');
     const limitRowsEl = document.querySelector('#limitRows');
     const alertEl = document.querySelector('#alert');
     const ruleRowsEl = document.querySelector('#ruleRows');
@@ -342,6 +378,48 @@
       return data;
     }
 
+    function formatEventTime(timestamp) {
+      if (!timestamp) return '-';
+      return new Date(timestamp * 1000).toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function renderEvents(events) {
+      if (!events.length) {
+        eventRowsEl.innerHTML = '<tr><td colspan="5" class="empty-state">暂无安全事件</td></tr>';
+        return;
+      }
+      eventRowsEl.innerHTML = events.map(item => `
+        <tr>
+          <td><div>${formatEventTime(item.timestamp)}</div><code class="small">${escapeHtml(item.requestId || '-')}</code></td>
+          <td><code>${escapeHtml(item.ip || '-')}</code><div class="small text-secondary mt-1">${escapeHtml(item.host || '-')}</div></td>
+          <td><span class="badge text-bg-dark method-badge">${escapeHtml(item.method || '-')}</span> <code class="path-code">${escapeHtml(item.uri || '-')}</code><div class="small text-secondary mt-1 text-truncate" style="max-width:260px" title="${escapeHtml(item.userAgent || '')}">${escapeHtml(item.userAgent || '-')}</div></td>
+          <td><div class="fw-semibold">${escapeHtml(item.ruleName || '全站 IP 黑名单')}</div><div class="small text-secondary mt-1">${item.ruleId ? `规则 ID：${escapeHtml(item.ruleId)}` : '未关联 URL 规则'}</div></td>
+          <td><span class="badge text-bg-${item.action === 'global' ? 'danger' : 'warning'}">${item.action === 'global' ? '全站封禁' : '限制接口'}</span><div class="small mt-1">HTTP ${escapeHtml(item.status || '-')} · ${escapeHtml(item.code || '-')}</div></td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadEvents() {
+      eventRowsEl.innerHTML = '<tr><td colspan="5" class="empty-state">加载中...</td></tr>';
+      const params = new URLSearchParams({ limit: '100' });
+      const requestId = document.querySelector('#eventRequestId').value.trim();
+      const ip = document.querySelector('#eventIp').value.trim();
+      const ruleId = document.querySelector('#eventRuleId').value.trim();
+      const action = document.querySelector('#eventAction').value;
+      if (requestId) params.set('request_id', requestId);
+      if (ip) params.set('ip', ip);
+      if (ruleId) params.set('rule_id', ruleId);
+      if (action) params.set('action', action);
+      try { const data = await api(`/admin/events?${params}`); renderEvents(data.events || []); }
+      catch (error) { eventRowsEl.innerHTML = '<tr><td colspan="5" class="empty-state text-danger">加载失败</td></tr>'; showAlert(error.message, 'danger'); }
+    }
+
+    async function clearEvents() {
+      if (!window.confirm('确认清空全部安全事件吗？此操作不可恢复。')) return;
+      try { await api('/admin/events', { method: 'DELETE' }); showAlert('安全事件已清空'); await loadEvents(); }
+      catch (error) { showAlert(error.message, 'danger'); }
+    }
+
     function renderLimits(limits) {
       if (!limits.length) {
         limitRowsEl.innerHTML = '<tr><td colspan="5" class="empty-state">暂无接口限制记录</td></tr>';
@@ -419,12 +497,17 @@
     });
 
     document.querySelector('#refreshBtn').addEventListener('click', loadBans);
+    document.querySelector('#refreshEventsBtn').addEventListener('click', loadEvents);
+    document.querySelector('#searchEventsBtn').addEventListener('click', loadEvents);
+    document.querySelector('#clearEventsBtn').addEventListener('click', clearEvents);
     document.querySelector('#refreshLimitsBtn').addEventListener('click', loadLimits);
+    document.querySelector('[data-bs-target="#eventsPane"]').addEventListener('shown.bs.tab', loadEvents);
     document.querySelector('[data-bs-target="#limitsPane"]').addEventListener('shown.bs.tab', loadLimits);
     document.querySelector('[data-bs-target="#bansPane"]').addEventListener('shown.bs.tab', loadBans);
     document.querySelector('[data-bs-target="#rulesPane"]').addEventListener('shown.bs.tab', loadRules);
     document.querySelector('#applyTokenBtn').addEventListener('click', () => {
       loadRules();
+      if (document.querySelector('#eventsPane').classList.contains('active')) loadEvents();
       if (document.querySelector('#limitsPane').classList.contains('active')) loadLimits();
       if (document.querySelector('#bansPane').classList.contains('active')) loadBans();
     });
