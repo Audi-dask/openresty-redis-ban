@@ -52,8 +52,36 @@ local function request_id()
     return string.sub(ngx.md5(tostring(ngx.now()) .. (ngx.var.remote_addr or "") .. (ngx.var.request_uri or "")), 1, 16)
 end
 
-local function block_response(status, code, title, message, retry_after)
-    local event_id = request_id()
+local function record_security_event(red, event)
+    local user_agent = ngx.var.http_user_agent or ""
+    if #user_agent > 500 then
+        user_agent = string.sub(user_agent, 1, 500)
+    end
+
+    local _, err = red:xadd(
+        "waf:security:events",
+        "MAXLEN", "~", 10000,
+        "*",
+        "requestId", event.request_id,
+        "timestamp", tostring(ngx.time()),
+        "ip", event.ip,
+        "host", ngx.var.host or "",
+        "method", ngx.req.get_method(),
+        "uri", ngx.var.uri or "/",
+        "ruleId", event.rule_id or "",
+        "ruleName", event.rule_name or "",
+        "action", event.action or "",
+        "code", event.code,
+        "status", tostring(event.status),
+        "userAgent", user_agent
+    )
+    if err then
+        ngx.log(ngx.ERR, "write security event failed: ", err)
+    end
+end
+
+local function block_response(status, code, title, message, retry_after, event_id)
+    event_id = event_id or request_id()
     local retry = math.max(tonumber(retry_after) or 0, 0)
     ngx.status = status
     ngx.header["Cache-Control"] = "no-store"
@@ -180,13 +208,22 @@ if global_err then
 end
 if global_banned ~= ngx.null then
     local ttl = red:ttl("ban:" .. ip)
+    local event_id = request_id()
+    record_security_event(red, {
+        request_id = event_id,
+        ip = ip,
+        action = "global",
+        code = "WAF_IP_BLOCKED",
+        status = ngx.HTTP_FORBIDDEN,
+    })
     redis_client.keepalive(red)
     return block_response(
         ngx.HTTP_FORBIDDEN,
         "WAF_IP_BLOCKED",
         "访问已被安全策略拦截",
         "当前网络地址已被临时限制访问，请稍后重试。",
-        ttl
+        ttl,
+        event_id
     )
 end
 
@@ -227,25 +264,47 @@ ngx.header["X-RateLimit-Remaining"] = status == "allowed" and math.max(rule.thre
 if status == "global_banned" or status == "global_limited" then
     local response_status = status == "global_banned" and ngx.HTTP_FORBIDDEN or ngx.HTTP_TOO_MANY_REQUESTS
     local ttl = red:ttl("ban:" .. ip)
+    local event_id = request_id()
+    record_security_event(red, {
+        request_id = event_id,
+        ip = ip,
+        rule_id = rule_id,
+        rule_name = rule.name,
+        action = "global",
+        code = "WAF_IP_BLOCKED",
+        status = response_status,
+    })
     redis_client.keepalive(red)
     return block_response(
         response_status,
         "WAF_IP_BLOCKED",
         "访问已被安全策略拦截",
         "当前网络地址触发了安全防护策略，请稍后重试。",
-        ttl
+        ttl,
+        event_id
     )
 end
 
 if status == "rule_banned" or status == "rule_limited" then
     local ttl = red:ttl("ban:rule:" .. rule_id .. ":" .. ip)
+    local event_id = request_id()
+    record_security_event(red, {
+        request_id = event_id,
+        ip = ip,
+        rule_id = rule_id,
+        rule_name = rule.name,
+        action = "endpoint",
+        code = "WAF_RATE_LIMITED",
+        status = ngx.HTTP_TOO_MANY_REQUESTS,
+    })
     redis_client.keepalive(red)
     return block_response(
         ngx.HTTP_TOO_MANY_REQUESTS,
         "WAF_RATE_LIMITED",
         "请求过于频繁",
         "您的访问已被安全策略临时限制，请稍后再试。",
-        ttl
+        ttl,
+        event_id
     )
 end
 

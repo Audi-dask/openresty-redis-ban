@@ -1,6 +1,6 @@
 services:
   openresty:
-    build: .
+    image: ${OPENRESTY_WAF_IMAGE:-openresty-redis-ban:latest}
     ports:
       - "80:80"
       - "8081:8081" # Admin 管理端口，仅允许内网管理网段访问

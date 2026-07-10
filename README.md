@@ -14,11 +14,78 @@
 - Redis 故障支持 fail-open 或 fail-closed
 - 管理端与业务反向代理端口隔离
 
-## 启动
+## 构建与启动
+
+构建 Linux x86_64 部署镜像：
 
 ```bash
-docker compose up -d --build
+./build_release.sh linux
 ```
+
+在 Apple Silicon Mac 的 Docker Desktop 中构建 ARM64 镜像：
+
+```bash
+./build_release.sh mac
+```
+
+构建脚本会生成带时间戳的版本镜像，并同时更新：
+
+```text
+openresty-redis-ban:latest
+```
+
+镜像构建完成后，启动阶段不再构建：
+
+```bash
+docker compose up -d
+```
+
+如需使用其他镜像仓库或版本，可通过环境变量覆盖：
+
+```bash
+IMAGE_REPO=registry.example.com/security/openresty-waf ./build_release.sh linux
+OPENRESTY_WAF_IMAGE=registry.example.com/security/openresty-waf:latest docker compose up -d
+```
+
+### `OPENRESTY_WAF_IMAGE` 是什么
+
+`docker-compose.yml` 中的配置：
+
+```yaml
+image: ${OPENRESTY_WAF_IMAGE:-openresty-redis-ban:latest}
+```
+
+是 Docker Compose 的环境变量替换语法，含义是：
+
+- 如果设置了 `OPENRESTY_WAF_IMAGE`，使用变量指定的镜像；
+- 如果没有设置，使用默认镜像 `openresty-redis-ban:latest`。
+
+因此，使用默认构建流程时无需传递变量：
+
+```bash
+./build_release.sh linux
+docker compose up -d
+```
+
+需要切换到其他仓库或指定版本时，可以在启动命令前临时传入：
+
+```bash
+OPENRESTY_WAF_IMAGE=registry.example.com/security/openresty-waf:v1.0.0 docker compose up -d
+```
+
+也可以在项目根目录的 `.env` 文件中配置，Docker Compose 会自动读取：
+
+```env
+OPENRESTY_WAF_IMAGE=registry.example.com/security/openresty-waf:v1.0.0
+```
+
+可以通过以下命令查看变量替换后的最终配置：
+
+```bash
+OPENRESTY_WAF_IMAGE=my-waf:v1 docker compose config
+```
+
+需要注意：`OPENRESTY_WAF_IMAGE` 是 Compose 启动前读取的变量，用于决定运行哪个镜像；`environment` 下的 `REDIS_HOST`、`ADMIN_TOKEN` 等变量才会传入容器内部供 OpenResty 和 Lua 使用。
 
 默认端口：
 
