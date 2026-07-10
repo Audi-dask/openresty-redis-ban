@@ -28,23 +28,26 @@ repeat
     cursor = res[1]
     local keys = res[2]
     for _, key in ipairs(keys) do
-        local reason, get_err = red:get(key)
-        if get_err then
-            admin.redis_error(red, "get", get_err)
-            return
-        end
+        -- 接口级自动封禁使用 ban:rule:*，不应混入全站 IP 黑名单列表。
+        if not key:match("^ban:rule:") then
+            local reason, get_err = red:get(key)
+            if get_err then
+                admin.redis_error(red, "get", get_err)
+                return
+            end
 
-        local ttl, ttl_err = red:ttl(key)
-        if ttl_err then
-            admin.redis_error(red, "ttl", ttl_err)
-            return
-        end
+            local ttl, ttl_err = red:ttl(key)
+            if ttl_err then
+                admin.redis_error(red, "ttl", ttl_err)
+                return
+            end
 
-        table.insert(bans, {
-            ip = string.sub(key, 5),
-            ttl = ttl,
-            reason = reason ~= ngx.null and reason or "",
-        })
+            table.insert(bans, {
+                ip = string.sub(key, 5),
+                ttl = ttl,
+                reason = reason ~= ngx.null and reason or "",
+            })
+        end
     end
 until cursor == "0"
 
