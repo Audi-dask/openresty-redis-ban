@@ -23,7 +23,7 @@ if method == "DELETE" then
     local ip = ngx.var.arg_ip
     if not rule_id or rule_id == "" or not ip or ip == "" then
         admin.done(red)
-        respond(ngx.HTTP_BAD_REQUEST, { ok = false, reason = "missing rule id or ip" })
+        respond(ngx.HTTP_BAD_REQUEST, { ok = false, reason = "缺少规则 ID 或 IP" })
         return
     end
 
@@ -40,7 +40,7 @@ end
 
 if method ~= "GET" then
     admin.done(red)
-    respond(ngx.HTTP_NOT_ALLOWED, { ok = false, reason = "method not allowed" })
+    respond(ngx.HTTP_NOT_ALLOWED, { ok = false, reason = "不支持该请求方法" })
     return
 end
 

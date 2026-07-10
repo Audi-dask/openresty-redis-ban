@@ -21,7 +21,7 @@ repeat
         admin.done(red)
         ngx.header["Content-Type"] = "application/json"
         ngx.status = ngx.HTTP_SERVICE_UNAVAILABLE
-        ngx.say('{"ok":false,"reason":"redis scan failed"}')
+        ngx.say('{"ok":false,"reason":"读取 IP 黑名单失败"}')
         return
     end
 

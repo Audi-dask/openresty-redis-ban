@@ -34,34 +34,34 @@ local function validate_rule(rule)
     local ban_ttl = tonumber(rule.banTtl)
 
     if name == "" or #name > 100 then
-        return nil, "invalid rule name"
+        return nil, "规则名称不能为空且不能超过 100 个字符"
     end
     if path == "" or #path > 500 then
-        return nil, "invalid path or keyword"
+        return nil, "URL 路径或关键字不能为空且不能超过 500 个字符"
     end
     if match_type == "exact" and string.sub(path, 1, 1) ~= "/" then
-        return nil, "exact path must start with slash"
+        return nil, "精确匹配路径必须以 / 开头"
     end
     if match_type ~= "exact" and match_type ~= "keyword" then
-        return nil, "invalid match type"
+        return nil, "匹配方式无效"
     end
     if method ~= "全部" and method ~= "GET" and method ~= "POST" and method ~= "PUT" and method ~= "DELETE" then
-        return nil, "invalid http method"
+        return nil, "HTTP 方法无效"
     end
     if action ~= "endpoint" and action ~= "global" then
-        return nil, "invalid action"
+        return nil, "处理范围无效"
     end
     if risk ~= "high" and risk ~= "medium" and risk ~= "normal" then
-        return nil, "invalid risk"
+        return nil, "风险等级无效"
     end
     if not threshold or threshold < 1 or threshold > 1000000 then
-        return nil, "invalid threshold"
+        return nil, "限制次数必须在 1 到 1000000 之间"
     end
     if not window or window < 1 or window > 31536000 then
-        return nil, "invalid window"
+        return nil, "统计窗口必须在 1 到 31536000 秒之间"
     end
     if not ban_ttl or ban_ttl < 1 or ban_ttl > 31536000 then
-        return nil, "invalid ban ttl"
+        return nil, "封禁时间必须在 1 到 31536000 秒之间"
     end
 
     return {
@@ -135,7 +135,7 @@ if method == "POST" then
         end
         if exists == 0 then
             admin.done(red)
-            respond(ngx.HTTP_NOT_FOUND, { ok = false, reason = "rule not found" })
+            respond(ngx.HTTP_NOT_FOUND, { ok = false, reason = "规则不存在" })
             return
         end
     end
@@ -156,7 +156,7 @@ if method == "DELETE" then
     local id = ngx.var.arg_id
     if not id or id == "" then
         admin.done(red)
-        respond(ngx.HTTP_BAD_REQUEST, { ok = false, reason = "missing rule id" })
+        respond(ngx.HTTP_BAD_REQUEST, { ok = false, reason = "缺少规则 ID" })
         return
     end
 
@@ -167,7 +167,7 @@ if method == "DELETE" then
     end
     if deleted == 0 then
         admin.done(red)
-        respond(ngx.HTTP_NOT_FOUND, { ok = false, reason = "rule not found" })
+        respond(ngx.HTTP_NOT_FOUND, { ok = false, reason = "规则不存在" })
         return
     end
 
@@ -178,4 +178,4 @@ if method == "DELETE" then
 end
 
 admin.done(red)
-respond(ngx.HTTP_NOT_ALLOWED, { ok = false, reason = "method not allowed" })
+respond(ngx.HTTP_NOT_ALLOWED, { ok = false, reason = "不支持该请求方法" })
