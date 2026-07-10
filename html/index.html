@@ -3,82 +3,170 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OpenResty IP 黑名单</title>
+  <title>OpenResty WAF 控制台</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    body { background: #f6f7f9; }
-    .shell { max-width: 1080px; }
+    body { background: #f4f6f9; color: #172033; }
+    .shell { max-width: 1240px; }
     .table td, .table th { vertical-align: middle; }
     .token-input { max-width: 420px; }
+    .stat-card { border: 0; box-shadow: 0 1px 3px rgba(16, 24, 40, .08); }
+    .stat-label { color: #667085; font-size: .875rem; }
+    .stat-value { font-size: 1.65rem; font-weight: 700; }
+    .nav-pills .nav-link { color: #475467; }
+    .nav-pills .nav-link.active { background: #172033; }
+    .path-code { color: #175cd3; background: #eff8ff; padding: .2rem .45rem; border-radius: .35rem; }
+    .method-badge { min-width: 54px; }
+    .empty-state { padding: 3rem 1rem; color: #667085; text-align: center; }
   </style>
 </head>
 <body>
   <main class="container shell py-4">
     <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
       <div>
-        <h1 class="h3 mb-1">IP 黑名单管理</h1>
-        <div class="text-secondary">OpenResty + Lua + Redis 动态封禁</div>
+        <h1 class="h3 mb-1">OpenResty WAF 控制台</h1>
+        <div class="text-secondary">IP 黑名单与敏感 URL 访问频率控制</div>
       </div>
-      <button id="refreshBtn" class="btn btn-outline-primary">刷新列表</button>
+      <!-- <span class="badge text-bg-success px-3 py-2">已连接后端</span> -->
     </div>
 
-    <section class="card mb-4">
-      <div class="card-body">
-        <label for="token" class="form-label">管理 Token</label>
-        <input id="token" class="form-control token-input" type="password" value="change-me" autocomplete="off">
-        <div class="form-text">对应 Docker 环境变量 ADMIN_TOKEN。</div>
+    <section class="card mb-4 border-0 shadow-sm">
+      <div class="card-body d-flex flex-column flex-md-row align-items-md-end gap-3">
+        <div class="flex-grow-1">
+          <label for="token" class="form-label">管理 Token</label>
+          <input id="token" class="form-control token-input" type="password" value="change-me" autocomplete="off">
+          <div class="form-text">URL 规则和 IP 黑名单共用，对应 Docker 环境变量 ADMIN_TOKEN。</div>
+        </div>
+        <button id="applyTokenBtn" class="btn btn-outline-primary">应用并刷新</button>
       </div>
     </section>
 
-    <section class="card mb-4">
-      <div class="card-header bg-white fw-semibold">添加拉黑 IP</div>
-      <div class="card-body">
-        <form id="banForm" class="row g-3">
-          <div class="col-md-4">
-            <label for="ip" class="form-label">IP</label>
-            <input id="ip" class="form-control" placeholder="1.2.3.4" required>
-          </div>
-          <div class="col-md-3">
-            <label for="ttl" class="form-label">封禁秒数</label>
-            <input id="ttl" class="form-control" type="number" min="1" value="3600" required>
-          </div>
-          <div class="col-md-3">
-            <label for="reason" class="form-label">原因</label>
-            <input id="reason" class="form-control" value="manual">
-          </div>
-          <div class="col-md-2 d-flex align-items-end">
-            <button class="btn btn-danger w-100" type="submit">拉黑</button>
-          </div>
-        </form>
-      </div>
-    </section>
+    <ul class="nav nav-pills bg-white rounded p-2 mb-4 shadow-sm" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#rulesPane" type="button">URL 防护规则</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#bansPane" type="button">IP 黑名单</button>
+      </li>
+    </ul>
 
     <div id="alert" class="alert d-none" role="alert"></div>
 
-    <section class="card">
-      <div class="card-header bg-white fw-semibold">当前黑名单</div>
-      <div class="table-responsive">
-        <table class="table table-hover mb-0">
-          <thead>
-            <tr>
-              <th>IP</th>
-              <th>剩余秒数</th>
-              <th>原因</th>
-              <th class="text-end">操作</th>
-            </tr>
-          </thead>
-          <tbody id="banRows">
-            <tr><td colspan="4" class="text-secondary text-center py-4">加载中...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <div class="tab-content">
+      <section id="rulesPane" class="tab-pane fade show active">
+        <div class="row g-3 mb-4">
+          <div class="col-6 col-lg-3"><div class="card stat-card h-100"><div class="card-body"><div class="stat-label">规则总数</div><div id="totalRules" class="stat-value">0</div></div></div></div>
+          <div class="col-6 col-lg-3"><div class="card stat-card h-100"><div class="card-body"><div class="stat-label">已启用</div><div id="enabledRules" class="stat-value text-success">0</div></div></div></div>
+          <div class="col-6 col-lg-3"><div class="card stat-card h-100"><div class="card-body"><div class="stat-label">敏感接口</div><div id="sensitiveRules" class="stat-value text-danger">0</div></div></div></div>
+          <div class="col-6 col-lg-3"><div class="card stat-card h-100"><div class="card-body"><div class="stat-label">默认处置</div><div class="fs-5 fw-semibold mt-2">仅限制命中接口</div></div></div></div>
+        </div>
+
+        <section class="card border-0 shadow-sm">
+          <div class="card-header bg-white border-0 py-3">
+            <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
+              <div>
+                <div class="fw-semibold">访问频率规则</div>
+                <div class="small text-secondary mt-1">精确规则优先于关键字规则；查询参数不参与匹配。</div>
+              </div>
+              <button id="addRuleBtn" class="btn btn-primary align-self-lg-start">新增规则</button>
+            </div>
+          </div>
+          <div class="card-body border-top">
+            <div class="row g-2">
+              <div class="col-md-5"><input id="ruleSearch" class="form-control" placeholder="搜索规则名称或 URL"></div>
+              <div class="col-md-3">
+                <select id="statusFilter" class="form-select">
+                  <option value="all">全部状态</option>
+                  <option value="enabled">已启用</option>
+                  <option value="disabled">已停用</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>规则</th>
+                  <th>匹配目标</th>
+                  <th>访问阈值</th>
+                  <th>超限后的处理范围</th>
+                  <th>状态</th>
+                  <th class="text-end">操作</th>
+                </tr>
+              </thead>
+              <tbody id="ruleRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="bansPane" class="tab-pane fade">
+        <section class="card mb-4 border-0 shadow-sm">
+          <div class="card-header bg-white fw-semibold">添加拉黑 IP</div>
+          <div class="card-body">
+            <form id="banForm" class="row g-3">
+              <div class="col-md-4"><label for="ip" class="form-label">IP</label><input id="ip" class="form-control" placeholder="1.2.3.4" required></div>
+              <div class="col-md-3"><label for="ttl" class="form-label">封禁秒数</label><input id="ttl" class="form-control" type="number" min="1" value="3600" required></div>
+              <div class="col-md-3"><label for="reason" class="form-label">原因</label><input id="reason" class="form-control" value="manual"></div>
+              <div class="col-md-2 d-flex align-items-end"><button class="btn btn-danger w-100" type="submit">拉黑</button></div>
+            </form>
+          </div>
+        </section>
+
+        <section class="card border-0 shadow-sm">
+          <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
+            <span class="fw-semibold">当前黑名单</span>
+            <button id="refreshBtn" class="btn btn-sm btn-outline-primary">刷新列表</button>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead><tr><th>IP</th><th>剩余秒数</th><th>原因</th><th class="text-end">操作</th></tr></thead>
+              <tbody id="banRows"><tr><td colspan="4" class="empty-state">切换到此页时加载...</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </div>
   </main>
 
+  <div class="modal fade" id="ruleModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+      <div class="modal-content">
+        <form id="ruleForm">
+          <div class="modal-header">
+            <div><h2 id="ruleModalTitle" class="modal-title fs-5">新增 URL 防护规则</h2><div class="small text-secondary mt-1">保存后规则将立即同步到 WAF。</div></div>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <input id="ruleId" type="hidden">
+            <div class="row g-3">
+              <div class="col-md-6"><label for="ruleName" class="form-label">规则名称</label><input id="ruleName" class="form-control" placeholder="例如：登录接口保护" required></div>
+              <div class="col-md-3"><label for="ruleMethod" class="form-label">HTTP 方法</label><select id="ruleMethod" class="form-select"><option>POST</option><option>GET</option><option>PUT</option><option>DELETE</option><option>全部</option></select></div>
+              <div class="col-md-3"><label for="ruleMatchType" class="form-label">匹配方式</label><select id="ruleMatchType" class="form-select"><option value="exact">精确匹配</option><option value="keyword">关键字匹配</option></select></div>
+              <div class="col-12"><label for="rulePath" class="form-label">URL 路径或关键字</label><input id="rulePath" class="form-control" placeholder="/api/login 或 login" required><div class="form-text">精确匹配填写完整路径；关键字匹配填写 URL 中需要包含的文本，查询参数不参与匹配。</div></div>
+              <div class="col-md-4"><label for="ruleThreshold" class="form-label">限制次数</label><div class="input-group"><input id="ruleThreshold" type="number" min="1" value="5" class="form-control" required><span class="input-group-text">次</span></div></div>
+              <div class="col-md-4"><label for="ruleWindow" class="form-label">统计窗口</label><div class="input-group"><input id="ruleWindow" type="number" min="1" value="60" class="form-control" required><span class="input-group-text">秒</span></div></div>
+              <div class="col-md-4"><label for="ruleBanTtl" class="form-label">封禁时间</label><div class="input-group"><input id="ruleBanTtl" type="number" min="1" value="600" class="form-control" required><span class="input-group-text">秒</span></div></div>
+              <div class="col-md-6"><label for="ruleAction" class="form-label">超限后的处理范围</label><select id="ruleAction" class="form-select"><option value="endpoint">仅限制此接口</option><option value="global">封禁该 IP 全站访问</option></select><div class="form-text">“仅限制此接口”不会影响该 IP 访问网站的其他页面或接口。</div></div>
+              <div class="col-md-6"><label for="ruleRisk" class="form-label">风险等级</label><select id="ruleRisk" class="form-select"><option value="high">高风险</option><option value="medium">中风险</option><option value="normal">普通</option></select></div>
+              <div class="col-12"><div class="form-check form-switch"><input id="ruleEnabled" class="form-check-input" type="checkbox" checked><label class="form-check-label" for="ruleEnabled">创建后立即启用</label></div></div>
+            </div>
+          </div>
+          <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit">保存规则</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     const tokenEl = document.querySelector('#token');
-    const rowsEl = document.querySelector('#banRows');
+    const banRowsEl = document.querySelector('#banRows');
     const alertEl = document.querySelector('#alert');
+    const ruleRowsEl = document.querySelector('#ruleRows');
+    const ruleModal = new bootstrap.Modal('#ruleModal');
+    let rules = [];
 
     function showAlert(message, type = 'success') {
       alertEl.className = `alert alert-${type}`;
@@ -86,44 +174,164 @@
       setTimeout(() => alertEl.classList.add('d-none'), 3000);
     }
 
-    async function api(path) {
-      const response = await fetch(path, {
-        headers: { 'X-Admin-Token': tokenEl.value }
-      });
-      const data = await response.json();
-      if (!response.ok || data.ok === false) {
-        throw new Error(data.reason || `HTTP ${response.status}`);
+    async function loadRules() {
+      ruleRowsEl.innerHTML = '<tr><td colspan="6" class="empty-state">加载中...</td></tr>';
+      try {
+        const data = await api('/admin/rules');
+        rules = data.rules || [];
+        renderRules();
+      } catch (error) {
+        ruleRowsEl.innerHTML = '<tr><td colspan="6" class="empty-state text-danger">规则加载失败，请检查管理 Token</td></tr>';
+        showAlert(error.message, 'danger');
       }
-      return data;
     }
 
-    function renderRows(bans) {
-      if (!bans.length) {
-        rowsEl.innerHTML = '<tr><td colspan="4" class="text-secondary text-center py-4">暂无拉黑 IP</td></tr>';
+    function riskBadge(risk) {
+      const map = { high: ['高风险', 'danger'], medium: ['中风险', 'warning'], normal: ['普通', 'secondary'] };
+      const item = map[risk];
+      return `<span class="badge text-bg-${item[1]}">${item[0]}</span>`;
+    }
+
+    function renderRules() {
+      const keyword = document.querySelector('#ruleSearch').value.trim().toLowerCase();
+      const status = document.querySelector('#statusFilter').value;
+      const filtered = rules.filter(rule => {
+        const keywordMatched = !keyword || rule.name.toLowerCase().includes(keyword) || rule.path.toLowerCase().includes(keyword);
+        const statusMatched = status === 'all' || (status === 'enabled' ? rule.enabled : !rule.enabled);
+        return keywordMatched && statusMatched;
+      });
+      document.querySelector('#totalRules').textContent = rules.length;
+      document.querySelector('#enabledRules').textContent = rules.filter(rule => rule.enabled).length;
+      document.querySelector('#sensitiveRules').textContent = rules.filter(rule => rule.risk === 'high').length;
+      if (!filtered.length) {
+        ruleRowsEl.innerHTML = '<tr><td colspan="6" class="empty-state">没有符合条件的规则</td></tr>';
         return;
       }
-
-      rowsEl.innerHTML = bans.map(item => `
+      ruleRowsEl.innerHTML = filtered.map(rule => `
         <tr>
-          <td><code>${item.ip}</code></td>
-          <td>${item.ttl}</td>
-          <td>${item.reason || ''}</td>
-          <td class="text-end">
-            <button class="btn btn-sm btn-outline-secondary" data-unban="${item.ip}">解除</button>
-          </td>
+          <td><div class="fw-semibold">${rule.name}</div><div class="mt-1">${riskBadge(rule.risk)}</div></td>
+          <td><div><span class="badge text-bg-dark method-badge">${rule.method}</span> <code class="path-code">${rule.path}</code></div><div class="small text-secondary mt-2">${rule.matchType === 'exact' ? '精确匹配' : '关键字匹配'}</div></td>
+          <td><div class="fw-semibold">${rule.threshold} 次 / ${rule.window} 秒</div><div class="small text-secondary mt-1">封禁 ${rule.banTtl} 秒</div></td>
+          <td>${rule.action === 'endpoint' ? '<div>仅限制此接口</div><div class="small text-secondary mt-1">其他页面仍可访问</div>' : '<div class="text-danger">封禁该 IP 全站访问</div><div class="small text-secondary mt-1">所有路径均不可访问</div>'}</td>
+          <td><div class="form-check form-switch"><input class="form-check-input" type="checkbox" data-toggle-rule="${rule.id}" ${rule.enabled ? 'checked' : ''}><label class="small">${rule.enabled ? '已启用' : '已停用'}</label></div></td>
+          <td class="text-end text-nowrap"><button class="btn btn-sm btn-outline-primary" data-edit-rule="${rule.id}">编辑</button> <button class="btn btn-sm btn-outline-danger" data-delete-rule="${rule.id}">删除</button></td>
         </tr>
       `).join('');
     }
 
-    async function loadBans() {
-      rowsEl.innerHTML = '<tr><td colspan="4" class="text-secondary text-center py-4">加载中...</td></tr>';
+    function resetRuleForm() {
+      document.querySelector('#ruleForm').reset();
+      document.querySelector('#ruleId').value = '';
+      document.querySelector('#ruleModalTitle').textContent = '新增 URL 防护规则';
+      document.querySelector('#ruleThreshold').value = 5;
+      document.querySelector('#ruleWindow').value = 60;
+      document.querySelector('#ruleBanTtl').value = 600;
+      document.querySelector('#ruleEnabled').checked = true;
+    }
+
+    function editRule(id) {
+      const rule = rules.find(item => String(item.id) === String(id));
+      if (!rule) return;
+      document.querySelector('#ruleModalTitle').textContent = '编辑 URL 防护规则';
+      document.querySelector('#ruleId').value = rule.id;
+      document.querySelector('#ruleName').value = rule.name;
+      document.querySelector('#ruleMethod').value = rule.method;
+      document.querySelector('#ruleMatchType').value = rule.matchType;
+      document.querySelector('#rulePath').value = rule.path;
+      document.querySelector('#ruleThreshold').value = rule.threshold;
+      document.querySelector('#ruleWindow').value = rule.window;
+      document.querySelector('#ruleBanTtl').value = rule.banTtl;
+      document.querySelector('#ruleAction').value = rule.action;
+      document.querySelector('#ruleRisk').value = rule.risk;
+      document.querySelector('#ruleEnabled').checked = rule.enabled;
+      ruleModal.show();
+    }
+
+    document.querySelector('#addRuleBtn').addEventListener('click', () => { resetRuleForm(); ruleModal.show(); });
+    document.querySelector('#ruleSearch').addEventListener('input', renderRules);
+    document.querySelector('#statusFilter').addEventListener('change', renderRules);
+
+    document.querySelector('#ruleForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const id = document.querySelector('#ruleId').value;
+      const rule = {
+        id: id || undefined,
+        name: document.querySelector('#ruleName').value.trim(),
+        method: document.querySelector('#ruleMethod').value,
+        matchType: document.querySelector('#ruleMatchType').value,
+        path: document.querySelector('#rulePath').value.trim(),
+        threshold: Number(document.querySelector('#ruleThreshold').value),
+        window: Number(document.querySelector('#ruleWindow').value),
+        banTtl: Number(document.querySelector('#ruleBanTtl').value),
+        action: document.querySelector('#ruleAction').value,
+        risk: document.querySelector('#ruleRisk').value,
+        enabled: document.querySelector('#ruleEnabled').checked
+      };
       try {
-        const data = await api('/admin/list');
-        renderRows(data.bans || []);
+        await api('/admin/rules', { method: 'POST', body: JSON.stringify(rule) });
+        ruleModal.hide();
+        showAlert(id ? '规则已更新' : '规则已创建');
+        await loadRules();
       } catch (error) {
-        rowsEl.innerHTML = '<tr><td colspan="4" class="text-danger text-center py-4">加载失败</td></tr>';
         showAlert(error.message, 'danger');
       }
+    });
+
+    ruleRowsEl.addEventListener('click', async event => {
+      const editId = event.target.dataset.editRule;
+      const deleteId = event.target.dataset.deleteRule;
+      if (editId) editRule(editId);
+      if (deleteId && window.confirm('确认删除这条规则吗？')) {
+        try {
+          await api(`/admin/rules?id=${encodeURIComponent(deleteId)}`, { method: 'DELETE' });
+          showAlert('规则已删除');
+          await loadRules();
+        } catch (error) {
+          showAlert(error.message, 'danger');
+        }
+      }
+    });
+
+    ruleRowsEl.addEventListener('change', async event => {
+      const id = event.target.dataset.toggleRule;
+      if (!id) return;
+      const rule = rules.find(item => String(item.id) === id);
+      try {
+        await api('/admin/rules', { method: 'POST', body: JSON.stringify({ ...rule, enabled: event.target.checked }) });
+        showAlert(event.target.checked ? '规则已启用' : '规则已停用', 'info');
+        await loadRules();
+      } catch (error) {
+        event.target.checked = !event.target.checked;
+        showAlert(error.message, 'danger');
+      }
+    });
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        ...options,
+        headers: {
+          'X-Admin-Token': tokenEl.value,
+          'Content-Type': 'application/json',
+          ...(options.headers || {})
+        }
+      });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) throw new Error(data.reason || `HTTP ${response.status}`);
+      return data;
+    }
+
+    function renderBans(bans) {
+      if (!bans.length) {
+        banRowsEl.innerHTML = '<tr><td colspan="4" class="empty-state">暂无拉黑 IP</td></tr>';
+        return;
+      }
+      banRowsEl.innerHTML = bans.map(item => `<tr><td><code>${item.ip}</code></td><td>${item.ttl}</td><td>${item.reason || ''}</td><td class="text-end"><button class="btn btn-sm btn-outline-secondary" data-unban="${item.ip}">解除</button></td></tr>`).join('');
+    }
+
+    async function loadBans() {
+      banRowsEl.innerHTML = '<tr><td colspan="4" class="empty-state">加载中...</td></tr>';
+      try { const data = await api('/admin/list'); renderBans(data.bans || []); }
+      catch (error) { banRowsEl.innerHTML = '<tr><td colspan="4" class="empty-state text-danger">加载失败</td></tr>'; showAlert(error.message, 'danger'); }
     }
 
     document.querySelector('#banForm').addEventListener('submit', async event => {
@@ -131,29 +339,28 @@
       const ip = document.querySelector('#ip').value.trim();
       const ttl = document.querySelector('#ttl').value.trim();
       const reason = document.querySelector('#reason').value.trim();
-      try {
-        await api(`/admin/ban?ip=${encodeURIComponent(ip)}&ttl=${encodeURIComponent(ttl)}&reason=${encodeURIComponent(reason)}`);
-        showAlert(`已拉黑 ${ip}`);
-        await loadBans();
-      } catch (error) {
-        showAlert(error.message, 'danger');
-      }
+      try { await api(`/admin/ban?ip=${encodeURIComponent(ip)}&ttl=${encodeURIComponent(ttl)}&reason=${encodeURIComponent(reason)}`); showAlert(`已拉黑 ${ip}`); await loadBans(); }
+      catch (error) { showAlert(error.message, 'danger'); }
     });
 
-    rowsEl.addEventListener('click', async event => {
+    banRowsEl.addEventListener('click', async event => {
       const ip = event.target.dataset.unban;
       if (!ip) return;
-      try {
-        await api(`/admin/unban?ip=${encodeURIComponent(ip)}`);
-        showAlert(`已解除 ${ip}`);
-        await loadBans();
-      } catch (error) {
-        showAlert(error.message, 'danger');
-      }
+      try { await api(`/admin/unban?ip=${encodeURIComponent(ip)}`); showAlert(`已解除 ${ip}`); await loadBans(); }
+      catch (error) { showAlert(error.message, 'danger'); }
     });
 
     document.querySelector('#refreshBtn').addEventListener('click', loadBans);
-    loadBans();
+    document.querySelector('[data-bs-target="#bansPane"]').addEventListener('shown.bs.tab', loadBans);
+    document.querySelector('[data-bs-target="#rulesPane"]').addEventListener('shown.bs.tab', loadRules);
+    document.querySelector('#applyTokenBtn').addEventListener('click', () => {
+      loadRules();
+      if (document.querySelector('#bansPane').classList.contains('active')) loadBans();
+    });
+    tokenEl.addEventListener('keydown', event => {
+      if (event.key === 'Enter') document.querySelector('#applyTokenBtn').click();
+    });
+    loadRules();
   </script>
 </body>
 </html>
