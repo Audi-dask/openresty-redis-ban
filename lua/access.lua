@@ -21,7 +21,7 @@ local function redis_unavailable(reason, red)
     ngx.log(ngx.ERR, "redis unavailable, fail-closed reject request: ", reason)
     ngx.header["Content-Type"] = "application/json"
     ngx.status = ngx.HTTP_SERVICE_UNAVAILABLE
-    ngx.say('{"ok":false,"reason":"redis unavailable"}')
+    ngx.say('{"status":"unavailable","code":"WAF_REDIS_UNAVAILABLE","message":"安全防护服务暂时不可用，请稍后重试"}')
     return ngx.exit(ngx.HTTP_SERVICE_UNAVAILABLE)
 end
 

@@ -8,7 +8,7 @@ function _M.require_token()
         ngx.log(ngx.ERR, "ADMIN_TOKEN is not configured")
         ngx.header["Content-Type"] = "application/json"
         ngx.status = ngx.HTTP_SERVICE_UNAVAILABLE
-        ngx.say('{"ok":false,"reason":"admin token not configured"}')
+        ngx.say('{"ok":false,"reason":"管理 Token 未配置"}')
         return false
     end
 
@@ -18,7 +18,7 @@ function _M.require_token()
     if actual ~= expected then
         ngx.header["Content-Type"] = "application/json"
         ngx.status = ngx.HTTP_UNAUTHORIZED
-        ngx.say('{"ok":false,"reason":"unauthorized"}')
+        ngx.say('{"ok":false,"reason":"管理 Token 无效"}')
         return false
     end
 
@@ -30,7 +30,7 @@ function _M.ip_arg()
     if not ip or ip == "" then
         ngx.header["Content-Type"] = "application/json"
         ngx.status = ngx.HTTP_BAD_REQUEST
-        ngx.say('{"ok":false,"reason":"missing ip"}')
+        ngx.say('{"ok":false,"reason":"缺少 IP 参数"}')
         return nil
     end
     return ip
@@ -65,17 +65,15 @@ function _M.validate_ban_ip(ip)
     if not ip_num then
         ngx.header["Content-Type"] = "application/json"
         ngx.status = ngx.HTTP_BAD_REQUEST
-        ngx.say('{"ok":false,"reason":"invalid ipv4"}')
+        ngx.say('{"ok":false,"reason":"IPv4 地址格式无效"}')
         return false
     end
 
+    -- 私网地址可能是真实的内网客户端，允许加入黑名单；仅保护不可作为正常客户端的特殊地址段。
     local protected_cidrs = {
         "0.0.0.0/8",
-        "10.0.0.0/8",
         "127.0.0.0/8",
         "169.254.0.0/16",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
         "224.0.0.0/4",
         "240.0.0.0/4",
         "255.255.255.255/32",
@@ -85,7 +83,7 @@ function _M.validate_ban_ip(ip)
         if cidr_contains(ip_num, cidr) then
             ngx.header["Content-Type"] = "application/json"
             ngx.status = ngx.HTTP_BAD_REQUEST
-            ngx.say('{"ok":false,"reason":"protected ip range"}')
+            ngx.say('{"ok":false,"reason":"该 IP 属于系统保留地址，不能加入黑名单"}')
             return false
         end
     end
@@ -99,7 +97,7 @@ function _M.redis()
         ngx.log(ngx.ERR, "redis connect failed: ", err)
         ngx.header["Content-Type"] = "application/json"
         ngx.status = ngx.HTTP_SERVICE_UNAVAILABLE
-        ngx.say('{"ok":false,"reason":"redis unavailable"}')
+        ngx.say('{"ok":false,"reason":"Redis 服务暂时不可用"}')
         return nil
     end
     return red
@@ -110,7 +108,7 @@ function _M.redis_error(red, operation, err)
     redis_client.close(red)
     ngx.header["Content-Type"] = "application/json"
     ngx.status = ngx.HTTP_SERVICE_UNAVAILABLE
-    ngx.say('{"ok":false,"reason":"redis unavailable"}')
+    ngx.say('{"ok":false,"reason":"Redis 服务暂时不可用"}')
 end
 
 function _M.done(red)

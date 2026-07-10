@@ -1,25 +1,49 @@
-# OpenResty + Lua + Redis 动态封禁
+# OpenResty + Lua + Redis URL 防护与动态封禁
 
-这是一个本地 Docker 示例，用 OpenResty、Lua 和 Redis 实现动态 IP 封禁。
+基于 OpenResty、Lua 和 Redis 实现的轻量级访问频率防护服务，支持按 URL 规则限流、接口级限制、全站 IP 黑名单和可视化管理。
+
+## 功能
+
+- 按 HTTP 方法和 URL 精确匹配或关键字匹配
+- 每条规则独立配置请求阈值、统计窗口和限制时长
+- 超限后仅限制命中接口，或封禁该 IP 的全站访问
+- 手动添加、查询和解除全站 IP 黑名单
+- 查看并提前解除接口级限制记录
+- 浏览器请求返回 HTML 安全拦截页
+- API 请求返回结构化 JSON、事件 ID 和 `Retry-After`
+- Redis 故障支持 fail-open 或 fail-closed
+- 管理端与业务反向代理端口隔离
 
 ## 启动
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
-另开一个终端测试访问：
+默认端口：
+
+- `80`：业务反向代理
+- `8081`：管理后台和管理 API
+- `6379`：Redis；生产环境不建议映射到公网
+
+查看服务状态：
 
 ```bash
-curl -i http://localhost:80/
+docker compose ps
 ```
 
-## 页面管理
+检查 OpenResty 配置：
 
-打开 Bootstrap 管理页面：
+```bash
+docker compose exec openresty openresty -t
+```
+
+## 管理后台
+
+访问：
 
 ```text
-http://localhost:80/admin/
+http://localhost:8081/
 ```
 
 默认管理 Token：
@@ -28,122 +52,186 @@ http://localhost:80/admin/
 change-me
 ```
 
-页面支持查看、添加和解除拉黑 IP。
+生产部署前必须修改 `docker-compose.yml` 中的 `ADMIN_TOKEN`。
 
-## API
+管理后台包含：
 
-拉黑一个 IP 60 秒：
+- URL 防护规则
+- 接口限制记录
+- 全站 IP 黑名单
 
-```bash
-curl -i -H 'X-Admin-Token: change-me' 'http://localhost:80/admin/ban?ip=1.2.3.4&ttl=60&reason=test'
+`8081` 默认允许回环和 RFC1918 私网访问。生产环境还应通过安全组、防火墙、VPN 或端口绑定限制管理入口。
+
+## 业务接入
+
+参考 `conf/conf.d/example.com.conf`，在真实业务 `location` 中先执行 WAF，再反向代理：
+
+```nginx
+location / {
+    access_by_lua_file /usr/local/openresty/lua/access.lua;
+
+    proxy_pass http://172.16.110.11:8080/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
 ```
 
-模拟这个 IP 访问：
+域名应解析到 OpenResty 所在服务器，外部请求必须先经过 OpenResty 才会触发防护规则。
 
-```bash
-curl -i -H 'X-Real-IP: 1.2.3.4' http://localhost:80/
+## URL 防护规则
+
+规则字段：
+
+- 规则名称
+- HTTP 方法：`GET`、`POST`、`PUT`、`DELETE` 或全部
+- 匹配方式：精确匹配或关键字匹配
+- URL 路径或关键字
+- 限制次数
+- 统计窗口
+- 限制时长
+- 处理范围：仅限制此接口或封禁该 IP 全站访问
+- 风险等级和启用状态
+
+精确规则优先于关键字规则，查询参数不参与匹配。
+
+### 接口级限制
+
+规则选择“仅限制此接口”时，Redis 写入：
+
+```text
+ban:rule:<规则ID>:<IP>
 ```
 
-查询封禁状态：
+该 IP 仍可访问其他路径，并会出现在管理后台的“接口限制记录”中。
 
-```bash
-curl -i -H 'X-Admin-Token: change-me' 'http://localhost:80/admin/check?ip=1.2.3.4'
+### 全站封禁
+
+规则选择“封禁该 IP 全站访问”或管理员手动拉黑时，Redis 写入：
+
+```text
+ban:<IP>
 ```
 
-查看当前黑名单：
+该 IP 的所有业务请求都会被拦截，并出现在“全站 IP 黑名单”中。
+
+## 管理 API
+
+所有管理 API 都需要：
+
+```http
+X-Admin-Token: change-me
+```
+
+### URL 规则
+
+```text
+GET    /admin/rules
+POST   /admin/rules
+DELETE /admin/rules?id=<规则ID>
+```
+
+### 接口限制记录
+
+```text
+GET    /admin/rule-limits
+DELETE /admin/rule-limits?rule_id=<规则ID>&ip=<IP>
+```
+
+解除接口限制时会同时删除该规则对应的限制键和计数键，避免立即再次触发。
+
+### 全站 IP 黑名单
+
+添加封禁：
 
 ```bash
-curl -i -H 'X-Admin-Token: change-me' 'http://localhost:80/admin/list'
+curl -H 'X-Admin-Token: change-me' \
+  'http://localhost:8081/admin/ban?ip=1.2.3.4&ttl=60&reason=test'
+```
+
+查询状态：
+
+```bash
+curl -H 'X-Admin-Token: change-me' \
+  'http://localhost:8081/admin/check?ip=1.2.3.4'
+```
+
+查看列表：
+
+```bash
+curl -H 'X-Admin-Token: change-me' \
+  'http://localhost:8081/admin/list'
 ```
 
 解除封禁：
 
 ```bash
-curl -i -H 'X-Admin-Token: change-me' 'http://localhost:80/admin/unban?ip=1.2.3.4'
+curl -H 'X-Admin-Token: change-me' \
+  'http://localhost:8081/admin/unban?ip=1.2.3.4'
 ```
 
-## 自动封禁
+手动拉黑支持公网和 RFC1918 私网 IPv4，但拒绝回环、链路本地、组播和系统保留地址。
 
-默认配置下，同一个 IP 在 60 秒内请求超过 `AUTO_BAN_THRESHOLD` 次会被自动封禁 300 秒。
+## WAF 拦截响应
 
-```bash
-for i in $(seq 1 25); do curl -s -o /dev/null -w "%{http_code}\n" -H 'X-Real-IP: 5.6.7.8' http://localhost:80/; done
-```
+### API 请求
 
-预期结果：前 `AUTO_BAN_THRESHOLD` 次返回 `200`，下一次返回 `429`，之后命中黑名单返回 `403`。
+接口级限频返回 `429 Too Many Requests`：
 
-## 配置项
-
-修改 `docker-compose.yml` 里的环境变量：
-
-- `ADMIN_TOKEN`：管理接口 Token，必须显式配置；未配置时管理接口会拒绝服务
-- `REDIS_HOST`：Redis 地址
-- `REDIS_PORT`：Redis 端口
-- `REDIS_PASSWORD`：Redis 密码，未开启密码时在 `docker-compose.yml` 中保持注释
-- `CLIENT_IP_MODE`：客户端 IP 获取模式，可选 `x_real_ip`、`proxy_protocol`、`remote_addr`
-- `FAIL_MODE`：业务防护链路的 Redis 故障策略，可选 `open`、`closed`
-- `AUTO_BAN_THRESHOLD`：触发自动封禁的请求次数阈值
-- `AUTO_BAN_WINDOW`：统计窗口，单位秒
-- `AUTO_BAN_TTL`：自动封禁时长，单位秒
-
-## Nginx 配置结构
-
-主配置只保留全局 Lua 路径、环境变量和站点 include：
-
-```nginx
-http {
-    lua_package_path "/usr/local/openresty/lua/?.lua;;";
-    resolver 127.0.0.11 valid=30s ipv6=off;
-
-    include /usr/local/openresty/nginx/conf/conf.d/*.conf;
+```json
+{
+  "status": "blocked",
+  "code": "WAF_RATE_LIMITED",
+  "message": "您的访问已被安全策略临时限制，请稍后再试。",
+  "requestId": "817acbad31c15d4ddfd32896b1a5f1dc",
+  "retryAfter": 90
 }
 ```
 
-管理页面和管理 API 在：
+全站黑名单返回 `403 Forbidden`，错误码为：
 
 ```text
-conf/conf.d/blacklist-admin.conf
+WAF_IP_BLOCKED
 ```
 
-业务站点可以参考：
+响应头包含：
 
 ```text
-conf/conf.d/example.com.conf.example
+Cache-Control: no-store
+X-WAF-Request-ID: <事件ID>
+Retry-After: <剩余秒数>
+X-RateLimit-Remaining: 0
 ```
 
-真实业务接入时，在对应 `location` 里加入：
+### 浏览器请求
 
-```nginx
-access_by_lua_file /usr/local/openresty/lua/access.lua;
-```
+非 `/api` 路径且 `Accept` 包含 `text/html` 时，返回响应式 HTML 安全拦截页，并展示事件 ID 和建议重试时间。
 
-## 客户端 IP 获取模式
+## 配置项
 
-通过 `CLIENT_IP_MODE` 控制 Lua 使用哪个地址作为封禁 IP：
+在 `docker-compose.yml` 中配置：
 
-- `x_real_ip`：七层 LB / 反向代理模式，读取 `X-Real-IP`，本地测试默认使用这个模式
-- `proxy_protocol`：四层 LB 模式，读取 `ngx.var.proxy_protocol_addr`
-- `remote_addr`：不信任 Header，只使用 TCP 连接来源地址
+- `ADMIN_TOKEN`：管理接口 Token，必须显式配置
+- `REDIS_HOST`：Redis 地址
+- `REDIS_PORT`：Redis 端口
+- `REDIS_PASSWORD`：Redis 密码；未启用时保持注释
+- `CLIENT_IP_MODE`：客户端 IP 获取模式
+- `FAIL_MODE`：Redis 故障策略，支持 `open` 和 `closed`
 
-### 生产推荐
+URL 阈值、统计窗口和限制时长由管理后台中的每条规则配置，不再使用全局 `AUTO_BAN_*` 环境变量。
 
-生产环境优先推荐使用：
+## 客户端 IP 获取
+
+### remote_addr
+
+生产环境默认推荐：
 
 ```yaml
 CLIENT_IP_MODE: "remote_addr"
 ```
 
-然后在 Nginx/OpenResty 配置里用 `realip` 模块把可信上游传来的真实 IP 归一化到 `$remote_addr`。这样 Lua 不需要直接读取容易被伪造的 HTTP Header。
-
-### 华为云七层 ELB
-
-华为云七层 HTTP/HTTPS ELB 会通过 `X-Forwarded-For` 传递真实客户端 IP，格式类似：
-
-```text
-X-Forwarded-For: 来访者真实IP, 代理服务器1-IP, 代理服务器2-IP
-```
-
-`X-Forwarded-For` 本身可以被客户端伪造，所以不要在 Lua 里无条件直接读取它。推荐做法是在 Nginx/OpenResty 中只信任华为云 ELB 或你自己的上游代理来源，再让 `realip` 改写 `$remote_addr`：
+如果 OpenResty 前面有可信负载均衡，应使用 Nginx Real IP 模块把可信上游提供的真实地址归一化到 `$remote_addr`：
 
 ```nginx
 set_real_ip_from 100.125.0.0/16;
@@ -151,28 +239,21 @@ real_ip_header X-Forwarded-For;
 real_ip_recursive on;
 ```
 
-说明：
+不要配置：
 
-- 共享型 ELB：华为云文档建议添加 `100.125.0.0/16`。
-- 独享型 ELB：添加 ELB 实例关联的 VPC 子网网段。
-- 如果 OpenResty 前面还有你自己的 NAT、网关或反向代理，需要把 OpenResty 看到的直接上游 IP 或网段加入 `set_real_ip_from`。
-- 不要配置 `set_real_ip_from 0.0.0.0/0`，否则等于信任任意客户端伪造的 `X-Forwarded-For`。
+```nginx
+set_real_ip_from 0.0.0.0/0;
+```
 
-配置完成后，Lua 继续使用 `CLIENT_IP_MODE=remote_addr`。此时 `$remote_addr` 已经是 realip 模块处理后的可信客户端 IP。
+否则任意客户端都可能伪造 `X-Forwarded-For`。
 
-### X-Real-IP 模式
+### x_real_ip
 
-`x_real_ip` 只适用于满足以下条件的环境：
+只适用于 OpenResty 无法被客户端直连，且可信上游会覆盖 `X-Real-IP` 的环境。否则客户端可以伪造 Header。
 
-- OpenResty 不能被公网客户端直连，只能被可信七层代理访问。
-- 上游代理会覆盖 `X-Real-IP`，而不是透传客户端自带的 `X-Real-IP`。
-- 你明确确认 `X-Real-IP` 就是真实客户端 IP。
+### proxy_protocol
 
-如果这些条件不满足，客户端可以伪造 `X-Real-IP` 绕过或误导封禁逻辑。
-
-### 四层 LB 模式
-
-四层 LB 模式还需要业务 `server` 的监听配置启用 Proxy Protocol：
+前置四层负载均衡启用 Proxy Protocol 时，业务监听也必须启用：
 
 ```nginx
 listen 80 proxy_protocol;
@@ -184,30 +265,30 @@ listen 80 proxy_protocol;
 CLIENT_IP_MODE: "proxy_protocol"
 ```
 
-只有当前面的四层 LB 已启用 Proxy Protocol 时才能使用该模式。
-
-### 为什么没有 x_forwarded_for 模式
-
-项目不提供直接读取 `X-Forwarded-For` 的模式。原因是 `X-Forwarded-For` 可以被客户端 100% 伪造。如果需要使用它，应该通过 Nginx/OpenResty 的 `realip` 模块限定可信上游，然后让 Lua 读取处理后的 `$remote_addr`。
-
 ## Redis 故障策略
-
-通过 `FAIL_MODE` 控制业务请求在 Redis 不可用时的行为：
-
-- `open`：Redis 故障时放行业务请求，只记录错误日志；默认推荐，避免安全组件变成全站单点故障
-- `closed`：Redis 故障时返回 `503`；适合宁可拒绝请求也不能绕过封禁的场景
-
-该策略只影响业务防护链路。管理 API 在 Redis 不可用时始终返回 `503`，避免拉黑、解封、查询出现假成功。
 
 ```yaml
 FAIL_MODE: "open"
 ```
 
+- `open`：Redis 故障时放行业务请求并记录错误日志，避免安全组件成为全站单点故障
+- `closed`：Redis 故障时返回 `503` 和 `WAF_REDIS_UNAVAILABLE`
+
+管理 API 在 Redis 不可用时始终返回 `503`。
+
 ## Redis Key
+
+- `waf:rules`：URL 防护规则 Hash
+- `waf:rule:id`：规则 ID 自增序列
+- `rate:rule:<规则ID>:<IP>`：规则访问计数器
+- `ban:rule:<规则ID>:<IP>`：接口级限制
+- `ban:<IP>`：全站 IP 黑名单
+
+访问计数和封禁使用 Redis `EVAL` 原子执行，避免计数成功但 TTL 设置失败。
 
 ## Redis 密码
 
-默认本地开发不启用 Redis 密码。如需开启，取消 `docker-compose.yml` 中两处注释，并保证密码一致：
+启用本地 Redis 密码时，确保 OpenResty 与 Redis 配置一致：
 
 ```yaml
 openresty:
@@ -218,7 +299,7 @@ redis:
   command: ["redis-server", "--appendonly", "yes", "--requirepass", "your-password"]
 ```
 
-如果连接外部 Redis，只需要设置 OpenResty 侧：
+连接外部 Redis 时只需配置 OpenResty：
 
 ```yaml
 openresty:
@@ -228,15 +309,12 @@ openresty:
     REDIS_PASSWORD: "your-password"
 ```
 
-- `ban:<ip>`：封禁记录，值是封禁原因，TTL 是剩余封禁时间
-- `rate:<ip>`：请求计数器，TTL 是当前统计窗口剩余时间
-
-业务防护链路使用 Redis `EVAL` 原子完成封禁检查和计数，避免 `INCR` 成功但 `EXPIRE` 失败导致计数器永久存在。
-
 ## 生产注意事项
 
-- 对外暴露服务前必须修改 `ADMIN_TOKEN`，Lua 不会使用默认 Token 兜底。
-- 真实部署时建议通过内网、VPN、mTLS 或网关规则限制 `/admin/*` 访问。
-- 只有当 `X-Real-IP` 是由你自己的反向代理写入时才能信任它，否则应该使用 `ngx.var.remote_addr`。
-- 管理配置默认用 `allow/deny` 限制了 `/admin/*` 来源，部署时应改成你的实际办公网、堡垒机或 VPN 出口 IP。
-- 手动拉黑接口会拒绝 `0.0.0.0/8`、本机地址、内网地址、链路本地地址、组播和保留地址，避免误操作影响内部服务。
+- 修改默认 `ADMIN_TOKEN`
+- 仅向管理网开放 `8081`
+- 不要将 Redis `6379` 暴露到公网
+- 根据实际办公网、VPN 或堡垒机网段收窄 `waf-admin.conf` 的 `allow` 范围
+- 使用 `remote_addr` 配合 Real IP 模块，而不是无条件信任客户端 Header
+- 业务必须先经过 OpenResty，绕过 OpenResty 直连后端不会触发 WAF
+- OpenResty 已配置 `server_tokens off`，不会在响应头和默认错误页中暴露具体版本号
