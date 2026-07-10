@@ -46,7 +46,10 @@
         <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#rulesPane" type="button">URL 防护规则</button>
       </li>
       <li class="nav-item" role="presentation">
-        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#bansPane" type="button">IP 黑名单</button>
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#limitsPane" type="button">接口限制记录</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#bansPane" type="button">全站 IP 黑名单</button>
       </li>
     </ul>
 
@@ -96,6 +99,24 @@
                 </tr>
               </thead>
               <tbody id="ruleRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="limitsPane" class="tab-pane fade">
+        <section class="card border-0 shadow-sm">
+          <div class="card-header bg-white d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 py-3">
+            <div>
+              <div class="fw-semibold">当前接口限制</div>
+              <div class="small text-secondary mt-1">仅展示“仅限制此接口”产生的临时限制，不影响该 IP 访问其他路径。</div>
+            </div>
+            <button id="refreshLimitsBtn" class="btn btn-sm btn-outline-primary">刷新列表</button>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead><tr><th>IP</th><th>命中规则</th><th>限制接口</th><th>剩余秒数</th><th class="text-end">操作</th></tr></thead>
+              <tbody id="limitRows"><tr><td colspan="5" class="empty-state">切换到此页时加载...</td></tr></tbody>
             </table>
           </div>
         </section>
@@ -163,6 +184,7 @@
   <script>
     const tokenEl = document.querySelector('#token');
     const banRowsEl = document.querySelector('#banRows');
+    const limitRowsEl = document.querySelector('#limitRows');
     const alertEl = document.querySelector('#alert');
     const ruleRowsEl = document.querySelector('#ruleRows');
     const ruleModal = new bootstrap.Modal('#ruleModal');
@@ -320,12 +342,45 @@
       return data;
     }
 
+    function renderLimits(limits) {
+      if (!limits.length) {
+        limitRowsEl.innerHTML = '<tr><td colspan="5" class="empty-state">暂无接口限制记录</td></tr>';
+        return;
+      }
+      limitRowsEl.innerHTML = limits.map(item => `
+        <tr>
+          <td><code>${escapeHtml(item.ip)}</code></td>
+          <td><div class="fw-semibold">${escapeHtml(item.ruleName)}</div><div class="small text-secondary mt-1">规则 ID：${escapeHtml(item.ruleId)}</div></td>
+          <td><span class="badge text-bg-dark method-badge">${escapeHtml(item.method)}</span> <code class="path-code">${escapeHtml(item.path)}</code><div class="small text-secondary mt-1">${item.matchType === 'keyword' ? '关键字匹配' : '精确匹配'}</div></td>
+          <td>${item.ttl}</td>
+          <td class="text-end"><button class="btn btn-sm btn-outline-secondary" data-unlimit-rule="${escapeHtml(item.ruleId)}" data-unlimit-ip="${escapeHtml(item.ip)}">解除限制</button></td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadLimits() {
+      limitRowsEl.innerHTML = '<tr><td colspan="5" class="empty-state">加载中...</td></tr>';
+      try { const data = await api('/admin/rule-limits'); renderLimits(data.limits || []); }
+      catch (error) { limitRowsEl.innerHTML = '<tr><td colspan="5" class="empty-state text-danger">加载失败</td></tr>'; showAlert(error.message, 'danger'); }
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+    }
+
+    function banReason(reason) {
+      if (reason && reason.startsWith('auto-rule:')) {
+        return `<span class="badge text-bg-warning">URL 规则自动封禁</span><div class="small text-secondary mt-1">规则：${escapeHtml(reason.slice(10))}</div>`;
+      }
+      return `<span class="badge text-bg-secondary">手动封禁</span><div class="small text-secondary mt-1">${escapeHtml(reason || 'manual')}</div>`;
+    }
+
     function renderBans(bans) {
       if (!bans.length) {
         banRowsEl.innerHTML = '<tr><td colspan="4" class="empty-state">暂无拉黑 IP</td></tr>';
         return;
       }
-      banRowsEl.innerHTML = bans.map(item => `<tr><td><code>${item.ip}</code></td><td>${item.ttl}</td><td>${item.reason || ''}</td><td class="text-end"><button class="btn btn-sm btn-outline-secondary" data-unban="${item.ip}">解除</button></td></tr>`).join('');
+      banRowsEl.innerHTML = bans.map(item => `<tr><td><code>${item.ip}</code></td><td>${item.ttl}</td><td>${banReason(item.reason)}</td><td class="text-end"><button class="btn btn-sm btn-outline-secondary" data-unban="${item.ip}">解除</button></td></tr>`).join('');
     }
 
     async function loadBans() {
@@ -343,6 +398,19 @@
       catch (error) { showAlert(error.message, 'danger'); }
     });
 
+    limitRowsEl.addEventListener('click', async event => {
+      const ruleId = event.target.dataset.unlimitRule;
+      const ip = event.target.dataset.unlimitIp;
+      if (!ruleId || !ip) return;
+      try {
+        await api(`/admin/rule-limits?rule_id=${encodeURIComponent(ruleId)}&ip=${encodeURIComponent(ip)}`, { method: 'DELETE' });
+        showAlert(`已解除 ${ip} 的接口限制`);
+        await loadLimits();
+      } catch (error) {
+        showAlert(error.message, 'danger');
+      }
+    });
+
     banRowsEl.addEventListener('click', async event => {
       const ip = event.target.dataset.unban;
       if (!ip) return;
@@ -351,10 +419,13 @@
     });
 
     document.querySelector('#refreshBtn').addEventListener('click', loadBans);
+    document.querySelector('#refreshLimitsBtn').addEventListener('click', loadLimits);
+    document.querySelector('[data-bs-target="#limitsPane"]').addEventListener('shown.bs.tab', loadLimits);
     document.querySelector('[data-bs-target="#bansPane"]').addEventListener('shown.bs.tab', loadBans);
     document.querySelector('[data-bs-target="#rulesPane"]').addEventListener('shown.bs.tab', loadRules);
     document.querySelector('#applyTokenBtn').addEventListener('click', () => {
       loadRules();
+      if (document.querySelector('#limitsPane').classList.contains('active')) loadLimits();
       if (document.querySelector('#bansPane').classList.contains('active')) loadBans();
     });
     tokenEl.addEventListener('keydown', event => {
